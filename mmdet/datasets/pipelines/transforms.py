@@ -787,3 +787,152 @@ class Albu(object):
         repr_str = self.__class__.__name__
         repr_str += '(transformations={})'.format(self.transformations)
         return repr_str
+
+
+@PIPELINES.register_module
+class AlbuSeparateRandomAugs(Albu):
+
+    def __init__(self,
+                 main_transforms,
+                 some_bbox_transoforms,
+                 spatial_transforms=None,
+                 sampling_ratio_low=1.0,
+                 sampling_ration_high=1.0,
+                 reassign_label=False,
+                 pseudo_label_value=1,
+                 bbox_params=None,
+                 keymap=None,
+                 update_pad_shape=False,
+                 skip_img_without_anno=False):
+        """
+        This class applies different transformations for main image and
+        some of the bboxes randomly chosen from annotation.
+
+        It also may reassign labels for transformed bboxes in order to create a new class for recognition purposes
+        or upsample an existing class.
+
+        main_transforms (list): list of pixel transformations applied to the background and objects
+        some_bbox_transoforms (list): list of pixel transformations applied to randomly chosen bboxes
+        spatial_transforms (list): list of spatial transformations applied to randomly chosen bboxes
+        sampling_ratio_low (float): minimum share of bboxes to be transformed
+        sampling_ratio_hight (float): maximum share of bboxes
+        reassign_label (bool): if True then assign `pseudo_label_value` to the transformed bboxes
+        pseudo_label_value (int): new label value
+        bbox_params (dict): bbox_params for albumentation `Compose`
+        keymap (dict): contains {'input key':'albumentation-style key'}
+        skip_img_without_anno (bool): whether to skip the image
+                                      if no ann left after aug
+        """
+        self.main_transforms = main_transforms
+        self.some_bbox_transoforms = some_bbox_transoforms
+        self.spatial_transforms = spatial_transforms
+
+        self.sr_low = sampling_ratio_low
+        self.sr_high = sampling_ration_high
+        self.reassign_label = reassign_label
+        self.pseudo_label_value = pseudo_label_value
+
+        self.filter_lost_elements = False
+        self.update_pad_shape = update_pad_shape
+        self.skip_img_without_anno = skip_img_without_anno
+
+        # A simple workaround to remove masks without boxes
+        if (isinstance(bbox_params, dict) and 'label_fields' in bbox_params
+                and 'filter_lost_elements' in bbox_params):
+            self.filter_lost_elements = True
+            self.origin_label_fields = bbox_params['label_fields']
+            bbox_params['label_fields'] = ['idx_mapper']
+            del bbox_params['filter_lost_elements']
+
+        self.bbox_params = (
+            self.albu_builder(bbox_params) if bbox_params else None)
+
+        self.main_aug = Compose([self.albu_builder(t) for t in self.main_transforms])
+        self.some_bbox_aug = Compose([self.albu_builder(t) for t in self.some_bbox_transoforms])
+        self.spatial_aug = Compose([self.albu_builder(t) for t in self.spatial_transforms],
+                                   bbox_params=self.bbox_params) if self.spatial_transforms else None
+        if not keymap:
+            self.keymap_to_albu = {
+                'img': 'image',
+                'gt_masks': 'masks',
+                'gt_bboxes': 'bboxes'
+            }
+        else:
+            self.keymap_to_albu = keymap
+        self.keymap_back = {v: k for k, v in self.keymap_to_albu.items()}
+
+    def __call__(self, results):
+        # dict to albumentations format
+        results = self.mapper(results, self.keymap_to_albu)
+
+        # get indices of bboxes to aug
+        indices = np.arange(len(results['gt_labels']))
+        size = np.random.uniform(low=self.sr_low, high=self.sr_high) * len(indices)
+        size = int(size)
+        indices_to_aug = np.random.choice(indices, size)
+
+        # using bbox coords create two binary masks
+        bboxes_to_aug = np.take(results['bboxes'], indices_to_aug, axis=0)
+        mask_bboxes_to_aug = np.zeros((results['image'].shape[0], results['image'].shape[1], 1))  # image mask
+        for coors in bboxes_to_aug:
+            x1, y1, x2, y2 = coors.astype(int)
+            mask_bboxes_to_aug[y1:y2, x1:x2, 0] = 1.0
+        mask_image = (~mask_bboxes_to_aug.astype(bool)).astype(int)
+
+        if self.reassign_label:
+            np.put(results['gt_labels'], indices_to_aug, self.pseudo_label_value)
+
+        masked_image = (self.main_aug(image=results['image'])['image'] * mask_image)
+        masked_bboxes = (self.some_bbox_aug(image=results['image'])['image'] * mask_bboxes_to_aug)
+        separately_transformed_image = sum([masked_image, masked_bboxes])
+        results['image'] = separately_transformed_image
+
+        if 'bboxes' in results:
+            # to list of boxes
+            if isinstance(results['bboxes'], np.ndarray):
+                results['bboxes'] = [x for x in results['bboxes']]
+            # add pseudo-field for filtration
+            if self.filter_lost_elements:
+                results['idx_mapper'] = np.arange(len(results['bboxes']))
+        if self.spatial_aug:
+            results = self.spatial_aug(**results)
+
+        if 'bboxes' in results:
+            if isinstance(results['bboxes'], list):
+                results['bboxes'] = np.array(
+                    results['bboxes'], dtype=np.float32)
+
+            # filter label_fields
+            if self.filter_lost_elements:
+
+                results['idx_mapper'] = np.arange(len(results['bboxes']))
+
+                for label in self.origin_label_fields:
+                    results[label] = np.array(
+                        [results[label][i] for i in results['idx_mapper']])
+                if 'masks' in results:
+                    results['masks'] = [
+                        results['masks'][i] for i in results['idx_mapper']
+                    ]
+
+                if (not len(results['idx_mapper'])
+                        and self.skip_img_without_anno):
+                    return None
+
+        if 'gt_labels' in results:
+            if isinstance(results['gt_labels'], list):
+                results['gt_labels'] = np.array(results['gt_labels'])
+
+        # back to the original format
+        results = self.mapper(results, self.keymap_back)
+
+        # update final shape
+        if self.update_pad_shape:
+            results['pad_shape'] = results['img'].shape
+
+        return results
+
+    def __repr__(self):
+        repr_str = self.__class__.__name__
+        repr_str += '(transformations={})'.format(self.transformations)
+        return repr_str

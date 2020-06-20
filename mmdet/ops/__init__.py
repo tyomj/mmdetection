@@ -2,9 +2,10 @@ from .context_block import ContextBlock
 from .conv_ws import ConvWS2d, conv_ws_2d
 from .corner_pool import CornerPool
 from .dcn import (DeformConv, DeformConvPack, DeformRoIPooling,
-                  DeformRoIPoolingPack, ModulatedDeformConv,
-                  ModulatedDeformConvPack, ModulatedDeformRoIPoolingPack,
-                  deform_conv, deform_roi_pooling, modulated_deform_conv)
+                  DeformRoIPoolingPack, DeltaCPooling, DeltaRPooling,
+                  ModulatedDeformConv, ModulatedDeformConvPack,
+                  ModulatedDeformRoIPoolingPack, deform_conv,
+                  deform_roi_pooling, modulated_deform_conv)
 from .generalized_attention import GeneralizedAttention
 from .masked_conv import MaskedConv2d
 from .nms import batched_nms, nms, nms_match, soft_nms
@@ -27,6 +28,8 @@ __all__ = [
     'DeformConvPack',
     'DeformRoIPooling',
     'DeformRoIPoolingPack',
+    'DeltaRPooling',
+    'DeltaCPooling',
     'ModulatedDeformRoIPoolingPack',
     'ModulatedDeformConv',
     'ModulatedDeformConvPack',

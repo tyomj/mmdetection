@@ -22,6 +22,7 @@ class StandardRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
     def init_bbox_head(self, bbox_roi_extractor, bbox_head):
         self.bbox_roi_extractor = build_roi_extractor(bbox_roi_extractor)
         self.bbox_head = build_head(bbox_head)
+        self.use_tsd = 'TSD' in bbox_head['type']
 
     def init_mask_head(self, mask_roi_extractor, mask_head):
         if mask_roi_extractor is not None:
@@ -113,9 +114,12 @@ class StandardRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         losses = dict()
         # bbox head forward and loss
         if self.with_bbox:
-            bbox_results = self._bbox_forward_train(x, sampling_results,
-                                                    gt_bboxes, gt_labels,
-                                                    img_metas)
+            if self.use_tsd:
+                bbox_results = self._bbox_forward_train_tsd(
+                    x, sampling_results, gt_bboxes, gt_labels, img_metas)
+            else:
+                bbox_results = self._bbox_forward_train(
+                    x, sampling_results, gt_bboxes, gt_labels, img_metas)
             losses.update(bbox_results['loss_bbox'])
 
         # mask head forward and loss
@@ -141,6 +145,29 @@ class StandardRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             cls_score=cls_score, bbox_pred=bbox_pred, bbox_feats=bbox_feats)
         return bbox_results
 
+    def _bbox_forward_tsd(self, x, rois):
+        # TODO: a more flexible way to decide which feature maps to use
+        bbox_feats = self.bbox_roi_extractor(
+            x[:self.bbox_roi_extractor.num_inputs], rois)
+        if self.with_shared_head:
+            bbox_feats = self.shared_head(
+                bbox_feats, x[:self.bbox_roi_extractor.num_inputs], rois)
+        (cls_score, bbox_pred, tsd_cls_score,
+            tsd_bbox_pred, delta_c, delta_r) = \
+            self.bbox_head(bbox_feats,
+                           x[:self.bbox_roi_extractor.num_inputs],
+                           rois)
+
+        bbox_results = dict(
+            cls_score=cls_score,
+            bbox_pred=bbox_pred,
+            tsd_cls_score=tsd_cls_score,
+            tsd_bbox_pred=tsd_bbox_pred,
+            delta_c=delta_c,
+            delta_r=delta_r,
+            bbox_feats=bbox_feats)
+        return bbox_results
+
     def _bbox_forward_train(self, x, sampling_results, gt_bboxes, gt_labels,
                             img_metas):
         rois = bbox2roi([res.bboxes for res in sampling_results])
@@ -150,6 +177,29 @@ class StandardRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                                                   gt_labels, self.train_cfg)
         loss_bbox = self.bbox_head.loss(bbox_results['cls_score'],
                                         bbox_results['bbox_pred'], rois,
+                                        *bbox_targets)
+
+        bbox_results.update(loss_bbox=loss_bbox)
+        return bbox_results
+
+    def _bbox_forward_train_tsd(self, x, sampling_results, gt_bboxes,
+                                gt_labels, img_metas):
+        rois = bbox2roi([res.bboxes for res in sampling_results])
+        bbox_results = self._bbox_forward_tsd(x, rois)
+
+        bbox_targets = self.bbox_head.get_target(
+            rois=rois,
+            sampling_results=sampling_results,
+            gt_bboxes=gt_bboxes,
+            gt_labels=gt_labels,
+            rcnn_train_cfg=self.train_cfg,
+            img_metas=img_metas,
+            **bbox_results)
+
+        loss_bbox = self.bbox_head.loss(bbox_results['cls_score'],
+                                        bbox_results['bbox_pred'],
+                                        bbox_results['tsd_cls_score'],
+                                        bbox_results['tsd_bbox_pred'],
                                         *bbox_targets)
 
         bbox_results.update(loss_bbox=loss_bbox)

@@ -302,8 +302,8 @@ class TSDConvFCBBoxHead(BBoxHead):
         for fc in self.TSD_reg_fcs:
             TSD_x_reg = self.relu(fc(TSD_x_reg))
 
-        TSD_cls_score = self.TSD_fc_cls(TSD_x_cls) if self.with_cls else None
-        TSD_bbox_pred = self.TSD_fc_reg(TSD_x_reg) if self.with_reg else None
+        tsd_cls_score = self.TSD_fc_cls(TSD_x_cls) if self.with_cls else None
+        tsd_bbox_pred = self.TSD_fc_reg(TSD_x_reg) if self.with_reg else None
 
         # shared part for sibling head, only used in training phase.
         if self.training:
@@ -343,17 +343,17 @@ class TSDConvFCBBoxHead(BBoxHead):
 
             cls_score = self.fc_cls(x_cls) if self.with_cls else None
             bbox_pred = self.fc_reg(x_reg) if self.with_reg else None
-            return (cls_score, bbox_pred, TSD_cls_score, TSD_bbox_pred,
+            return (cls_score, bbox_pred, tsd_cls_score, tsd_bbox_pred,
                     delta_c, delta_r)
         else:
-            return None, None, TSD_cls_score, TSD_bbox_pred, delta_c, delta_r
+            return None, None, tsd_cls_score, tsd_bbox_pred, delta_c, delta_r
 
     @force_fp32(
-        apply_to=('delta_c', 'delta_r', 'TSD_cls_score', 'TSD_bbox_pred',
+        apply_to=('delta_c', 'delta_r', 'tsd_cls_score', 'tsd_bbox_pred',
                   'cls_score', 'bbox_pred'))
     def get_target(self, rois, sampling_results, gt_bboxes, gt_labels, delta_c,
-                   delta_r, cls_score, bbox_pred, TSD_cls_score, TSD_bbox_pred,
-                   rcnn_train_cfg, img_metas):
+                   delta_r, cls_score, bbox_pred, tsd_cls_score, tsd_bbox_pred,
+                   rcnn_train_cfg, **kwargs):
         pos_proposals = [res.pos_bboxes for res in sampling_results]
         neg_proposals = [res.neg_bboxes for res in sampling_results]
         pos_gt_bboxes = [res.pos_gt_bboxes for res in sampling_results]
@@ -380,12 +380,12 @@ class TSDConvFCBBoxHead(BBoxHead):
             bbox_pred[(rois[:, 0] == i).type(torch.bool)]
             for i in range(len(sampling_results))
         ]
-        TSD_cls_score_ = [
-            TSD_cls_score[(rois[:, 0] == i).type(torch.bool)]
+        tsd_cls_score_ = [
+            tsd_cls_score[(rois[:, 0] == i).type(torch.bool)]
             for i in range(len(sampling_results))
         ]
-        TSD_bbox_pred_ = [
-            TSD_bbox_pred[(rois[:, 0] == i).type(torch.bool)]
+        tsd_bbox_pred_ = [
+            tsd_bbox_pred[(rois[:, 0] == i).type(torch.bool)]
             for i in range(len(sampling_results))
         ]
 
@@ -399,8 +399,8 @@ class TSDConvFCBBoxHead(BBoxHead):
             delta_r_,
             cls_score_,
             bbox_pred_,
-            TSD_cls_score_,
-            TSD_bbox_pred_,
+            tsd_cls_score_,
+            tsd_bbox_pred_,
             rcnn_train_cfg,
             reg_classes,
             cls_pc_margin=self.cls_pc_margin,
@@ -410,13 +410,13 @@ class TSDConvFCBBoxHead(BBoxHead):
         return cls_reg_targets
 
     @force_fp32(
-        apply_to=('cls_score', 'bbox_pred', 'TSD_cls_score', 'TSD_bbox_pred',
+        apply_to=('cls_score', 'bbox_pred', 'tsd_cls_score', 'tsd_bbox_pred',
                   'pc_cls_loss', 'pc_loc_loss'))
     def loss(self,
              cls_score,
              bbox_pred,
-             TSD_cls_score,
-             TSD_bbox_pred,
+             tsd_cls_score,
+             tsd_bbox_pred,
              labels,
              label_weights,
              bbox_targets,
@@ -439,17 +439,17 @@ class TSDConvFCBBoxHead(BBoxHead):
                     avg_factor=avg_factor,
                     reduction_override=reduction_override)
                 losses['acc'] = accuracy(cls_score, labels)
-        if TSD_cls_score is not None:
+        if tsd_cls_score is not None:
             avg_factor = max(
                 torch.sum(TSD_label_weights > 0).float().item(), 1.)
-            if TSD_cls_score.numel() > 0:
+            if tsd_cls_score.numel() > 0:
                 losses['loss_TSD_cls'] = self.loss_cls(
-                    TSD_cls_score,
+                    tsd_cls_score,
                     TSD_labels,
                     TSD_label_weights,
                     avg_factor=avg_factor,
                     reduction_override=reduction_override)
-                losses['TSD_acc'] = accuracy(TSD_cls_score, TSD_labels)
+                losses['TSD_acc'] = accuracy(tsd_cls_score, TSD_labels)
 
         if bbox_pred is not None:
             pos_inds = labels > 0
@@ -468,19 +468,19 @@ class TSDConvFCBBoxHead(BBoxHead):
                     bbox_weights[pos_inds.type(torch.bool)],
                     avg_factor=bbox_targets.size(0),
                     reduction_override=reduction_override)
-        if TSD_bbox_pred is not None:
+        if tsd_bbox_pred is not None:
             pos_inds = TSD_labels > 0
             if pos_inds.any():
                 if self.reg_class_agnostic:
-                    TSD_bbox_pred = TSD_bbox_pred.view(
-                        TSD_bbox_pred.size(0), 4)[pos_inds.type(torch.bool)]
+                    tsd_bbox_pred = tsd_bbox_pred.view(
+                        tsd_bbox_pred.size(0), 4)[pos_inds.type(torch.bool)]
                 else:
-                    TSD_bbox_pred = TSD_bbox_pred.view(
-                        TSD_bbox_pred.size(0), -1,
+                    tsd_bbox_pred = tsd_bbox_pred.view(
+                        tsd_bbox_pred.size(0), -1,
                         4)[pos_inds.type(torch.bool),
                            TSD_labels[pos_inds.type(torch.bool)]]
                 losses['loss_TSD_bbox'] = self.loss_bbox(
-                    TSD_bbox_pred,
+                    tsd_bbox_pred,
                     TSD_bbox_targets[pos_inds.type(torch.bool)],
                     TSD_bbox_weights[pos_inds.type(torch.bool)],
                     avg_factor=TSD_bbox_targets.size(0),

@@ -405,8 +405,8 @@ class TSDConvFCBBoxHead(BBoxHead):
             reg_classes,
             cls_pc_margin=self.cls_pc_margin,
             loc_pc_margin=self.loc_pc_margin,
-            target_means=self.target_means,
-            target_stds=self.target_stds)
+            target_means=self.bbox_coder.means,
+            target_stds=self.bbox_coder.stds)
         return cls_reg_targets
 
     @force_fp32(

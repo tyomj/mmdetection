@@ -252,15 +252,3 @@ def bbox_target_single_tsd(pos_bboxes,
     return (labels, label_weights, bbox_targets, bbox_weights, TSD_labels,
             TSD_label_weights, TSD_bbox_targets, TSD_bbox_weights, pc_cls_loss,
             pc_loc_loss)
-
-
-def expand_target(bbox_targets, bbox_weights, labels, num_classes):
-    bbox_targets_expand = bbox_targets.new_zeros(
-        (bbox_targets.size(0), 4 * num_classes))
-    bbox_weights_expand = bbox_weights.new_zeros(
-        (bbox_weights.size(0), 4 * num_classes))
-    for i in torch.nonzero(labels > 0).squeeze(-1):
-        start, end = labels[i] * 4, (labels[i] + 1) * 4
-        bbox_targets_expand[i, start:end] = bbox_targets[i, :]
-        bbox_weights_expand[i, start:end] = bbox_weights[i, :]
-    return bbox_targets_expand, bbox_weights_expand

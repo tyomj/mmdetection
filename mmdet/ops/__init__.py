@@ -1,4 +1,5 @@
 from .context_block import ContextBlock
+from .conv_wc import ConvWC2d
 from .conv_ws import ConvWS2d, conv_ws_2d
 from .corner_pool import CornerPool
 from .dcn import (DeformConv, DeformConvPack, DeformRoIPooling,
@@ -6,6 +7,7 @@ from .dcn import (DeformConv, DeformConvPack, DeformRoIPooling,
                   ModulatedDeformConvPack, ModulatedDeformRoIPoolingPack,
                   deform_conv, deform_roi_pooling, modulated_deform_conv)
 from .generalized_attention import GeneralizedAttention
+from .mabn import MABN2d
 from .masked_conv import MaskedConv2d
 from .nms import batched_nms, nms, nms_match, soft_nms
 from .non_local import NonLocal2D
@@ -41,6 +43,8 @@ __all__ = [
     'NonLocal2D',
     'get_compiler_version',
     'get_compiling_cuda_version',
+    'MABN2d',
+    'ConvWC2d',
     'ConvWS2d',
     'conv_ws_2d',
     'build_plugin_layer',

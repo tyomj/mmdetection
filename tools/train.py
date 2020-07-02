@@ -122,9 +122,6 @@ def main():
     cfg.seed = args.seed
     meta['seed'] = args.seed
 
-    model = build_detector(
-        cfg.model, train_cfg=cfg.train_cfg, test_cfg=cfg.test_cfg)
-
     datasets = [build_dataset(cfg.data.train)]
     if len(cfg.workflow) == 2:
         val_dataset = copy.deepcopy(cfg.data.val)
@@ -137,6 +134,17 @@ def main():
             mmdet_version=__version__,
             config=cfg.pretty_text,
             CLASSES=datasets[0].CLASSES)
+
+    train_ds_len = datasets[0].__len__()
+    if 'norm_cfg' in cfg and 'CBN' in cfg.norm_cfg['type']:
+        cfg.norm_cfg['burnin'] = int(cfg.norm_cfg['burnin'] * train_ds_len /
+                                     cfg.data['samples_per_gpu'] / 2)
+        logger.info('dataset length: {}, burnin iter of CBN: {}'.format(
+            train_ds_len, cfg.norm_cfg['burnin']))
+
+    model = build_detector(
+        cfg.model, train_cfg=cfg.train_cfg, test_cfg=cfg.test_cfg)
+
     # add an attribute for visualization convenience
     model.CLASSES = datasets[0].CLASSES
     train_detector(
